@@ -165,6 +165,17 @@ class KindleReaderDataStore(object):
     }
 
     def decode_object(self, name, val):
+        # Object sub-values are fully read before this is called (the byte
+        # stream is already past OBJECT_END), so on any format drift we can
+        # safely fall back to the raw value list without corrupting decoding.
+        raw = list(val)
+        try:
+            return {name: self._decode_known(name, val)}
+        except Exception as e:
+            self.log.warning("raw fallback for structure %s: %s" % (name, repr(e)))
+            return {name: raw}
+
+    def _decode_known(self, name, val):
         obj = collections.OrderedDict()
 
         if name in {
@@ -294,9 +305,6 @@ class KindleReaderDataStore(object):
             if len(val):
                 obj["unknown2"] = val.pop(0)
 
-            if len(val):
-                obj["unknown3"] = val.pop(0)  # Additional field that may contain 'INVALID' or other values
-
         elif name == "purchase.state.data":
             obj["state"] = val.pop(0)           # string
             obj["time"] = datetime.datetime.fromtimestamp(val.pop(0) / 1000.0).isoformat()
@@ -352,18 +360,21 @@ class KindleReaderDataStore(object):
             obj["bottomMargin"] = val.pop(0)    # int
             obj["unknown1"] = val.pop(0)        # boolean
 
-        elif name == "whisperstore.migration.status":
-            obj = [val.pop(0) for _ in range(len(val))]  # array of boolean values
-
         else:
             self.log.error("Unknown data structure %s" % name)
             obj = val
             val = []
 
         if len(val):
-            raise Exception("Excess values found for structure %s: %s" % (name, repr(val)))
+            # Newer firmware (e.g. 5.18.x) adds trailing fields this parser
+            # doesn't know. Object framing is delimiter-based (OBJECT_END),
+            # so draining leftovers here is safe and keeps the stream aligned.
+            self.log.warning("Excess values for structure %s (newer firmware?): %s" % (name, repr(val)))
+            if isinstance(obj, dict):
+                obj["_unparsed_trailing"] = list(val)
+            val[:] = []
 
-        return {name: obj}
+        return obj
 
     @staticmethod
     def decode_position(position):
