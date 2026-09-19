@@ -21,3 +21,12 @@ results.txt
 
 # macOS
 .DS_Store
+
+# Local config (see config.example.sh)
+config.sh
+
+# Generated output
+highlights/
+
+# Fetched from upstream by fetch-krds.sh
+krds.py

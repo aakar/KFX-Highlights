@@ -76,11 +76,7 @@ macOS has no native MTP support, so this needs two pieces:
    Put the binary somewhere on your `PATH` (this setup uses
    `/usr/local/bin/go-mtpfs`).
 
-3. **A mount point:**
-
-   ```
-   mkdir -p ~/mnt/temp
-   ```
+The script creates the mount point itself, so there's nothing else to set up.
 
 The Kindle must be **plugged in, powered on, and past its lock screen** —
 MTP does not expose storage while the device is locked.
@@ -88,8 +84,8 @@ MTP does not expose storage while the device is locked.
 To mount and unmount by hand:
 
 ```
-go-mtpfs ~/mnt/temp &
-umount ~/mnt/temp
+go-mtpfs ~/mnt/kindle &
+umount ~/mnt/kindle
 ```
 
 ### Python
@@ -103,12 +99,61 @@ pip install pillow pypdf lxml beautifulsoup4
 `kfxlib` itself comes from jhowell's KFX Input plugin and is bundled here as
 `KFX Input.zip` — nothing to install. `sqlite3` is in the standard library.
 
+### krds.py
+
+`krds.py` decodes the legacy `.yjr` sidecars. It's jhowell's parser, not ours,
+so it isn't vendored here — fetch it from upstream:
+
+```
+./fetch-krds.sh
+```
+
+The version is pinned to a specific commit and verified against a known
+SHA-256, so you get the same bytes every time and a tampered or force-pushed
+file is refused. To move to a newer upstream release:
+
+```
+./fetch-krds.sh --latest
+```
+
+That prints a diff of what changed, installs it, and rewrites the pin in
+`fetch-krds.sh` for you to review and commit.
+
 ### Mail
 
-The script sends through **Mail.app** via AppleScript, so Mail must be
-configured with a working account. The first run will ask for automation
-permission. Highlights go to `add@readwise.io` — change the address near the
-bottom of `extract-kindle-highlights.sh` to send somewhere else.
+Sending goes through **Mail.app** via AppleScript, so Mail must be configured
+with a working account, and the first run will ask for automation permission.
+Email is optional — set `KFX_EMAIL=""` and the HTML is just written to disk.
+
+## Configuration
+
+Nothing in the scripts needs editing. Paths are discovered at runtime and
+settings come from `config.sh`:
+
+```
+cp config.example.sh config.sh
+```
+
+`config.sh` is gitignored. Every setting has a working default, so an empty
+file is fine. See `config.example.sh` for all of them:
+
+| Variable | Default | |
+|---|---|---|
+| `KFX_MOUNT_POINT` | `~/mnt/kindle` | where the Kindle is mounted |
+| `KFX_EMAIL` | `add@readwise.io` | destination; `""` disables email |
+| `KFX_OUTPUT_DIR` | `./highlights` | where generated HTML is kept |
+| `KFX_DRM_SKIP` | *(empty)* | ASINs to skip, space-separated |
+| `KFX_KINDLE_DIR` | *(auto)* | book folder, if detection fails |
+
+They're environment variables too, so you can override one for a single run:
+
+```
+KFX_EMAIL="" ./extract-kindle-highlights.sh
+```
+
+The mount point, the book folder, and the annotation database are all located
+automatically — device layouts differ, and the folder holding the books is
+`documents/` on some Kindles and `documents/Downloads/ItemsNN` on others.
 
 ## Usage
 
@@ -165,8 +210,8 @@ python3 extract_highlights.py <book.kfx> <annotations.yjr>
 **DRM.** Highlight *positions* are readable for every book, but turning them
 into text requires decoding the `.kfx`, and purchased books are encrypted.
 `kfxlib` raises `KFXDRMError` and the book is skipped. Books sent via
-"Send to Kindle" are not affected. Known-DRM ASINs are listed in `DRM_SKIP` at
-the top of the script so they're skipped quietly instead of failing each run.
+"Send to Kindle" are not affected. Put known-DRM ASINs in `KFX_DRM_SKIP` in
+`config.sh` so they're skipped quietly instead of failing every run.
 
 **MTP is flaky.** Copies occasionally fail with `Bad file descriptor`, and the
 tree sometimes isn't walkable right after mounting. The script retries copies,

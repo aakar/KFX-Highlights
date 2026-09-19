@@ -8,21 +8,49 @@
 # book read after ~2026-07-26. This script reads the new store first and
 # falls back to .yjr for books that predate the move.
 
-KINDLE_DIR="/Users/aakar/mnt/temp/Internal Storage/documents/Downloads/Items01"
-MOUNT_POINT="/Users/aakar/mnt/temp"
-WORK_DIR="/Users/aakar/Documents/Development/KFX-Highlights"
+# Everything below is configurable. Copy config.example.sh to config.sh and
+# edit that (it's gitignored) or set the KFX_* variables in the environment;
+# the environment wins. Nothing here should need editing.
+
+WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$WORK_DIR/config.sh" ] && . "$WORK_DIR/config.sh"
+
+# Where to mount the Kindle. Created if missing.
+MOUNT_POINT="${KFX_MOUNT_POINT:-$HOME/mnt/kindle}"
+
+# Where to send highlights. Empty means don't email, just save the HTML.
+READWISE_EMAIL="${KFX_EMAIL-add@readwise.io}"
+
+# Generated HTML is kept here.
+OUTPUT_DIR="${KFX_OUTPUT_DIR:-$WORK_DIR/highlights}"
+
+# ASINs whose .kfx is DRM-locked. The highlight positions are in the store,
+# but resolving them to text needs the book contents, which we can't decode.
+# Listed so they're skipped quietly instead of failing every run.
+DRM_SKIP="${KFX_DRM_SKIP:-}"
+
+# Usually discovered automatically; set KFX_KINDLE_DIR to override.
+KINDLE_DIR="${KFX_KINDLE_DIR:-}"
+
 LAST_RUN_FILE="$WORK_DIR/.last_run"
 CONVERTER="$WORK_DIR/ksdk_to_krds.py"
 KRDS="$WORK_DIR/krds.py"
 EXTRACTOR="$WORK_DIR/extract_highlights_kfxlib.py"
 LOCAL_DB="$WORK_DIR/.ksdk_annotations.db"
 
-# Books whose .kfx is DRM-locked. The highlight positions are in the store,
-# but resolving them to text needs the book contents, which we can't decode.
-# Listed here so they're skipped quietly instead of failing every run.
-DRM_SKIP="B0BSYF3447"
-
 cd "$WORK_DIR" || exit 1
+mkdir -p "$MOUNT_POINT" "$OUTPUT_DIR"
+
+for cmd in go-mtpfs python3; do
+  command -v "$cmd" >/dev/null || { echo "❌ $cmd not found on PATH"; exit 1; }
+done
+
+# krds.py is fetched from upstream rather than vendored here.
+if [ ! -f "$KRDS" ]; then
+  echo "❌ krds.py is missing. Fetch it from upstream first:"
+  echo "     ./fetch-krds.sh"
+  exit 1
+fi
 
 go-mtpfs "$MOUNT_POINT" &
 MTP_PID=$!
@@ -34,22 +62,58 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Wait for the mount to come up. The directory appearing is not enough — MTP
-# can expose Items01 before it will walk the .sdr subfolders, and a find that
-# runs in that window returns nothing at all. So wait until we can actually
-# see .yjr files, and treat "still none" as a failure rather than "no news".
+# The Kindle usually exposes a single volume ("Internal Storage") holding
+# documents/ and system/, but the name varies, so look for it rather than
+# assuming. Sets STORAGE_ROOT.
+find_storage_root() {
+  local d
+  [ -d "$MOUNT_POINT/documents" ] && { STORAGE_ROOT="$MOUNT_POINT"; return 0; }
+  for d in "$MOUNT_POINT"/*/; do
+    [ -d "$d/documents" ] && { STORAGE_ROOT="${d%/}"; return 0; }
+  done
+  return 1
+}
+
+# Books live in documents/ on some devices and documents/Downloads/ItemsNN on
+# others. Whichever it is, it's the folder holding the .sdr sidecar folders.
+# Pick the folder with the most of them: documents/ itself usually has a lone
+# "My Clippings.sdr", which would otherwise win just by being shallower.
+find_kindle_dir() {
+  KINDLE_DIR=$(find "$STORAGE_ROOT/documents" -maxdepth 4 -type d -name "*.sdr" 2>/dev/null \
+    | sed 's|/[^/]*\.sdr$||' \
+    | sort | uniq -c | sort -rn | head -1 \
+    | sed 's|^ *[0-9]* ||')
+  [ -n "$KINDLE_DIR" ]
+}
+
+# Wait for the mount to come up. The mount point appearing is not enough — MTP
+# can expose the book folder before it will walk the .sdr subfolders, and a
+# find that runs in that window returns nothing at all. So wait until we can
+# actually see .yjr files, and treat "still none" as a failure, not "no news".
+STORAGE_ROOT=""
 TOTAL_YJR=0
 for _ in $(seq 1 20); do
-  if [ -d "$KINDLE_DIR" ]; then
-    TOTAL_YJR=$(find "$KINDLE_DIR" -name "*.yjr" 2>/dev/null | wc -l | tr -d ' ')
-    [ "$TOTAL_YJR" -gt 0 ] && break
+  [ -n "$STORAGE_ROOT" ] || find_storage_root
+  if [ -n "$STORAGE_ROOT" ]; then
+    [ -n "$KINDLE_DIR" ] || find_kindle_dir
+    if [ -n "$KINDLE_DIR" ] && [ -d "$KINDLE_DIR" ]; then
+      TOTAL_YJR=$(find "$KINDLE_DIR" -name "*.yjr" 2>/dev/null | wc -l | tr -d ' ')
+      [ "$TOTAL_YJR" -gt 0 ] && break
+    fi
   fi
   sleep 1
 done
 
-if [ ! -d "$KINDLE_DIR" ]; then
-  echo "❌ Kindle not mounted at $KINDLE_DIR — is the device plugged in and unlocked?"
+if [ -z "$STORAGE_ROOT" ]; then
+  echo "❌ Nothing mounted at $MOUNT_POINT — is the Kindle plugged in and unlocked?"
+  echo "   MTP does not expose storage while the device is locked."
   kill "$MTP_PID" 2>/dev/null
+  exit 1
+fi
+
+if [ -z "$KINDLE_DIR" ] || [ ! -d "$KINDLE_DIR" ]; then
+  echo "❌ Mounted at $STORAGE_ROOT, but found no book folder (nothing with"
+  echo "   .sdr sidecars under documents/). Set KFX_KINDLE_DIR to override."
   exit 1
 fi
 
@@ -130,31 +194,38 @@ process_book() {
 
   html="${base}.highlights.html"
   if [ -f "$html" ]; then
-    echo "Emailing: $html"
-    osascript <<EOF
+    mv -f "$html" "$OUTPUT_DIR/$html"
+    if [ -n "$READWISE_EMAIL" ]; then
+      echo "Emailing: $html"
+      osascript <<EOF
 tell application "Mail"
   set newMessage to make new outgoing message with properties {subject:"Kindle Highlights", content:"See attached.", visible:true}
   tell newMessage
-    make new to recipient at end of to recipients with properties {address:"add@readwise.io"}
-    make new attachment with properties {file name:"$WORK_DIR/$html"} at after the last word of the last paragraph
+    make new to recipient at end of to recipients with properties {address:"$READWISE_EMAIL"}
+    make new attachment with properties {file name:"$OUTPUT_DIR/$html"} at after the last word of the last paragraph
     send
   end tell
 end tell
 EOF
-    SENT=$((SENT + 1))
+      SENT=$((SENT + 1))
+    else
+      echo "Saved: $OUTPUT_DIR/$html"
+      SENT=$((SENT + 1))
+    fi
   else
     echo "ℹ️ No highlights resolved for $base — nothing to send"
     EMPTY=$((EMPTY + 1))
   fi
 
-  rm -f "$base.$BOOK_EXT" "$html"
+  rm -f "$base.$BOOK_EXT"
 }
 
 # ---------------------------------------------------------------------------
 # Primary path: the account-wide annotation store.
 # ---------------------------------------------------------------------------
 DB_ASINS=""
-DEVICE_DB=$(find "$MOUNT_POINT/Internal Storage/system/ksdk/.annotations" \
+# One store per Amazon account, under a directory named for the account id.
+DEVICE_DB=$(find "$STORAGE_ROOT/system/ksdk/.annotations" \
               -name "ksdk_annotation_v1.db" 2>/dev/null | head -1)
 
 if [ -n "$DEVICE_DB" ] && cp "$DEVICE_DB" "$LOCAL_DB" 2>/dev/null; then
