@@ -1,11 +1,68 @@
 # KFX Highlights
 
 Pull Kindle highlights off the device over USB, resolve them to real text, and
-mail them to Readwise.
+save them as HTML — optionally emailing them to Readwise.
 
 Most of the documents I read on my Kindle are sent via "Send to Kindle" so that
 I can read them on other devices. There's no built-in way to export those
 synced highlights, so this does it directly from the device's own storage.
+
+macOS only. Works with Kindle firmware on both sides of the 5.19 annotation
+change (see [Where annotations live](#where-annotations-live)).
+
+## Quick start
+
+**1. Install the two things macOS needs to read a Kindle over USB.**
+
+[macFUSE](https://macfuse.io/) is a regular installer — afterwards, approve the
+system extension in *System Settings → Privacy & Security* and reboot. Then:
+
+```
+go install github.com/hanwen/go-mtpfs@latest
+```
+
+Make sure the resulting binary is on your `PATH`.
+
+**2. Get this repo and its Python dependencies.**
+
+```
+git clone https://github.com/aakar/KFX-Highlights.git
+cd KFX-Highlights
+pip install pillow pypdf lxml beautifulsoup4
+```
+
+**3. Fetch the KRDS parser** (it's a third-party file, so it isn't vendored
+here — this pulls a pinned, checksum-verified copy):
+
+```
+./fetch-krds.sh
+```
+
+**4. Plug in the Kindle and unlock it.** Storage stays hidden while the device
+is on its lock screen, which is the most common reason this fails.
+
+**5. Run it:**
+
+```
+./extract-kindle-highlights.sh --no-email
+```
+
+Highlights land in `highlights/` as one HTML file per book. That's it — no
+configuration needed, and paths are discovered automatically.
+
+**6. Optional — email them to Readwise** instead of only saving:
+
+```
+cp config.example.sh config.sh     # then edit if you want
+./extract-kindle-highlights.sh
+```
+
+This sends through Mail.app to `add@readwise.io`, so Mail needs a working
+account and will ask for automation permission the first time. See
+[Configuration](#configuration) to change the address or anything else.
+
+> Re-runs only pick up highlights newer than the last successful run. To
+> re-export everything, delete `.last_run`.
 
 ## How it works
 
