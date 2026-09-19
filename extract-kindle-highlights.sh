@@ -88,7 +88,7 @@ go-mtpfs "$MOUNT_POINT" &
 MTP_PID=$!
 
 cleanup() {
-  rm -f changed_yjrs.txt "$LOCAL_DB"
+  rm -f changed_yjrs.txt "$LOCAL_DB" "$WORK_DIR/.extract_err"
   rm -f *.json
   umount "$MOUNT_POINT" 2>/dev/null
 }
@@ -217,12 +217,24 @@ process_book() {
     return
   fi
 
-  if ! python3 "$EXTRACTOR" "$json" "$base.$BOOK_EXT"; then
-    echo "❌ Extraction failed for $base"
-    SKIPPED="$SKIPPED\n  - $base (extraction failed)"
-    rm -f "$base.$BOOK_EXT"
+  # Capture stderr so a DRM failure reads as one clear line instead of a
+  # Python traceback — it's expected for purchased books, not a crash.
+  local errlog="$WORK_DIR/.extract_err"
+  if ! python3 "$EXTRACTOR" "$json" "$base.$BOOK_EXT" 2>"$errlog"; then
+    if grep -q "KFXDRMError" "$errlog" 2>/dev/null; then
+      echo "❌ $base is DRM-protected."
+      echo "   Its highlight positions exist, but the book text can't be"
+      echo "   decoded. Add $asin to KFX_DRM_SKIP in config.sh to skip it."
+      SKIPPED="$SKIPPED\n  - $base (DRM-protected)"
+    else
+      echo "❌ Extraction failed for $base"
+      tail -5 "$errlog" | sed 's/^/   /'
+      SKIPPED="$SKIPPED\n  - $base (extraction failed)"
+    fi
+    rm -f "$base.$BOOK_EXT" "$errlog"
     return
   fi
+  rm -f "$errlog"
 
   html="${base}.highlights.html"
   if [ -f "$html" ]; then
