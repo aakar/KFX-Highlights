@@ -3,28 +3,31 @@
 #
 #   cp config.example.sh config.sh
 #
-# Every setting has a working default — an empty config.sh is fine. The ":="
-# form below means an environment variable of the same name wins, so you can
-# override any of these for a single run:
+# Every setting has a working default — an empty config.sh is fine. The "="
+# form below assigns only when the variable is unset, so an environment
+# variable wins and you can override any of these for a single run:
 #
 #   KFX_EMAIL="" ./extract-kindle-highlights.sh
+#
+# (Note it's "=" and not ":=". The latter would treat a deliberate empty
+# value as unset and overwrite it, so KFX_EMAIL="" would still send mail.)
 
 # Where to mount the Kindle. Created if it doesn't exist.
-: "${KFX_MOUNT_POINT:=$HOME/mnt/kindle}"
+: "${KFX_MOUNT_POINT=$HOME/mnt/kindle}"
 
 # Where highlights are emailed. Readwise's address is the default.
 # Set to "" to skip email entirely and just write the HTML files.
-: "${KFX_EMAIL:=add@readwise.io}"
+: "${KFX_EMAIL=add@readwise.io}"
 
 # Where generated HTML is kept. $WORK_DIR is the repo directory.
-: "${KFX_OUTPUT_DIR:=$WORK_DIR/highlights}"
+: "${KFX_OUTPUT_DIR=$WORK_DIR/highlights}"
 
 # Space-separated ASINs to skip: purchased books whose .kfx is DRM-locked
 # can't be decoded, so they fail every run until listed here. The ASIN is the
 # trailing part of the filename, e.g. "Some Title_B0BSYF3447.kfx" -> B0BSYF3447
-: "${KFX_DRM_SKIP:=}"
+: "${KFX_DRM_SKIP=}"
 
 # Only set this if the book folder isn't found automatically. It's the folder
 # containing the .sdr sidecar folders, e.g.
 #   $KFX_MOUNT_POINT/Internal Storage/documents/Downloads/Items01
-# : "${KFX_KINDLE_DIR:=}"
+# : "${KFX_KINDLE_DIR=}"

@@ -13,13 +13,45 @@
 # the environment wins. Nothing here should need editing.
 
 WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+NO_EMAIL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-email|--save-only)
+      NO_EMAIL=1
+      ;;
+    -h|--help)
+      cat <<USAGE
+Usage: $(basename "$0") [--no-email]
+
+Pull new Kindle highlights off the device, resolve them to text, and email
+them. Highlights are always saved as HTML to the output directory.
+
+  --no-email, --save-only   Save the HTML only; don't send anything.
+  -h, --help                Show this message.
+
+Settings live in config.sh (see config.example.sh) and can be overridden
+with KFX_* environment variables.
+USAGE
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1 (try --help)" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
 [ -f "$WORK_DIR/config.sh" ] && . "$WORK_DIR/config.sh"
 
 # Where to mount the Kindle. Created if missing.
 MOUNT_POINT="${KFX_MOUNT_POINT:-$HOME/mnt/kindle}"
 
 # Where to send highlights. Empty means don't email, just save the HTML.
+# Note the "-" and not ":-": KFX_EMAIL="" is a deliberate "don't send".
 READWISE_EMAIL="${KFX_EMAIL-add@readwise.io}"
+[ "$NO_EMAIL" -eq 1 ] && READWISE_EMAIL=""
 
 # Generated HTML is kept here.
 OUTPUT_DIR="${KFX_OUTPUT_DIR:-$WORK_DIR/highlights}"
@@ -298,7 +330,11 @@ done < changed_yjrs.txt
 
 echo
 echo "===== Summary ====="
-echo "Emailed:       $SENT"
+if [ -n "$READWISE_EMAIL" ]; then
+  echo "Emailed:       $SENT"
+else
+  echo "Saved:         $SENT  ($OUTPUT_DIR)"
+fi
 echo "No highlights: $EMPTY"
 if [ -n "$SKIPPED" ]; then
   echo "Skipped:"

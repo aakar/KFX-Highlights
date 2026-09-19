@@ -119,11 +119,21 @@ file is refused. To move to a newer upstream release:
 That prints a diff of what changed, installs it, and rewrites the pin in
 `fetch-krds.sh` for you to review and commit.
 
-### Mail
+### Mail (optional)
 
-Sending goes through **Mail.app** via AppleScript, so Mail must be configured
-with a working account, and the first run will ask for automation permission.
-Email is optional — set `KFX_EMAIL=""` and the HTML is just written to disk.
+Email is optional. Highlights are **always** saved as HTML to the output
+directory; emailing is an extra step on top. To skip it entirely:
+
+```
+./extract-kindle-highlights.sh --no-email
+```
+
+or set `KFX_EMAIL=""` in `config.sh` to make that permanent. Either way
+nothing is sent and Mail.app is never touched, so none of the below applies.
+
+If you do want email, it goes through **Mail.app** via AppleScript, so Mail
+must be configured with a working account, and the first run will ask for
+automation permission.
 
 ## Configuration
 
@@ -160,7 +170,8 @@ automatically — device layouts differ, and the folder holding the books is
 Plug in the Kindle, unlock it, and run:
 
 ```
-./extract-kindle-highlights.sh
+./extract-kindle-highlights.sh            # save HTML and email it
+./extract-kindle-highlights.sh --no-email # save HTML only
 ```
 
 It handles mounting and unmounting itself. Output looks like:
