@@ -1,0 +1,23 @@
+# Run state
+.last_run
+.last_run_ref
+.ksdk_annotations.db
+changed_yjrs.txt
+results.txt
+
+# Book files and annotation data pulled off the Kindle
+*.kfx
+*.azw3
+*.azw
+*.mobi
+*.yjr
+*.yjf
+*.bad_file
+*.db
+
+# Generated output
+*.json
+*.highlights.html
+
+# macOS
+.DS_Store
