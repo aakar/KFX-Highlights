@@ -246,8 +246,21 @@ def generate_html(title, authors, items, output_path, year=""):
         meta_parts = []
         if item.get("chapter"):
             meta_parts.append(item["chapter"])
+
+        # Match the Kindle's own notebook export, which pairs them as
+        # "Page 15 · Location 352". The location we emit is the KFX position,
+        # not a true Kindle location — the device doesn't store one, and the
+        # position-to-location ratio varies ~20% between books, so it can't
+        # be derived. It is unique and monotonic, which is what Readwise
+        # needs to order highlights.
+        ref_parts = []
         if item.get("page"):
-            meta_parts.append(f"Page {item['page']}")
+            ref_parts.append(f"Page {item['page']}")
+        if item.get("locStart") is not None:
+            ref_parts.append(f"Location {item['locStart']}")
+        if ref_parts:
+            meta_parts.append(" · ".join(ref_parts))
+
         meta_str = " - " + " >  ".join(meta_parts) if meta_parts else ""
 
         text = escape(item.get("text", ""))
@@ -255,7 +268,7 @@ def generate_html(title, authors, items, output_path, year=""):
             html_parts.append(f"<div class='noteHeading'>Note{meta_str}</div>")
         else:
             html_parts.append(
-                f"<div class='noteHeading'>Highlight (<span class='highlight_yellow'>yellow</span>){meta_str}</div>"
+                f"<div class='noteHeading'>Highlight(<span class='highlight_yellow'>yellow</span>){meta_str}</div>"
             )
         html_parts.append(f"<div class='noteText'>{text}</div>")
 

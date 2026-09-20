@@ -34,3 +34,6 @@ krds.py
 # Locally maintained clippings file
 "My Clippings.txt"
 .sidecars/
+
+# Python bytecode
+__pycache__/

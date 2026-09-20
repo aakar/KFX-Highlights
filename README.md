@@ -212,7 +212,8 @@ file is fine. See `config.example.sh` for all of them:
 | `KFX_MOUNT_POINT` | `~/mnt/kindle` | where the Kindle is mounted |
 | `KFX_EMAIL` | `add@readwise.io` | destination; `""` disables email |
 | `KFX_OUTPUT_DIR` | `./highlights` | where generated HTML is kept |
-| `KFX_DRM_SKIP` | *(empty)* | ASINs to skip, space-separated |
+| `KFX_DRM_SKIP` | *(empty)* | DRM-locked ASINs to skip, space-separated |
+| `KFX_SKIP` | *(empty)* | any other ASINs to leave alone |
 | `KFX_CLIPPINGS` | `./highlights/My Clippings.txt` | local clippings file; `""` disables |
 | `KFX_KINDLE_DIR` | *(auto)* | book folder, if detection fails |
 
@@ -314,6 +315,18 @@ python3 extract_highlights.py <book.kfx> <annotations.yjr>
 ```
 
 ## Limitations
+
+**Locations aren't real Kindle locations.** Each highlight is exported in the
+Kindle's own format, `Page 26 · Location 36467`. The page is accurate — it
+comes from the book's page list. The location is our raw KFX position, not the
+number your Kindle would show.
+
+The device doesn't store a Kindle location for an annotation, and it can't be
+derived: measured against books where the Kindle *had* written real locations,
+the position-to-location ratio ranges from about 110 to 134 depending on the
+book, and drifts within a single book too. Even a per-book best fit is off by
+5–13 locations. So the number is unique and correctly ordered, which is what
+an importer needs, but it isn't comparable to what the Kindle displays.
 
 **DRM.** Highlight *positions* are readable for every book, but turning them
 into text requires decoding the `.kfx`, and purchased books are encrypted.

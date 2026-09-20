@@ -35,3 +35,6 @@
 # A local My Clippings.txt, kept up to date by update_clippings.py
 # Set to "" to disable, or point elsewhere.
 : "${KFX_CLIPPINGS=$KFX_OUTPUT_DIR/My Clippings.txt}"
+
+# Other ASINs to leave alone (books already in your reading app, say).
+: "${KFX_SKIP=}"

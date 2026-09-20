@@ -61,6 +61,10 @@ OUTPUT_DIR="${KFX_OUTPUT_DIR:-$WORK_DIR/highlights}"
 # Listed so they're skipped quietly instead of failing every run.
 DRM_SKIP="${KFX_DRM_SKIP:-}"
 
+# Any other ASINs to leave alone — books already in your reading app that you
+# don't want re-sent, say. Same space-separated format.
+DRM_SKIP="$DRM_SKIP ${KFX_SKIP:-}"
+
 # Usually discovered automatically; set KFX_KINDLE_DIR to override.
 KINDLE_DIR="${KFX_KINDLE_DIR:-}"
 
@@ -300,7 +304,7 @@ if [ -n "$DEVICE_DB" ] && cp "$DEVICE_DB" "$LOCAL_DB" 2>/dev/null; then
   for ASIN in $DB_ASINS; do
     case " $DRM_SKIP " in
       *" $ASIN "*)
-        echo "Skipping $ASIN (known DRM-locked book)"
+        echo "Skipping $ASIN (on the skip list)"
         continue
         ;;
     esac
