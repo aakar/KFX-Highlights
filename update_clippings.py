@@ -55,7 +55,30 @@ def parse_existing(path):
     return keys
 
 
-def dedup_key(title, kind, text):
+def normalize_heading(heading):
+    """Collapse the Kindle's heading style and ours onto the same value.
+
+    The Kindle writes a personal document's mangled filename-title, e.g.
+        Hacking Growth_ How Today's Fastest-Growin - Sean Ellis (Sean Ellis)
+    while we clean that up before writing:
+        Hacking Growth: How Today's Fastest-Growin (Sean Ellis)
+
+    Both must key the same, or every entry the Kindle already wrote looks new.
+    """
+    h = (heading or "").strip()
+    m = re.match(r"^(.*) \(([^()]*)\)$", h)
+    title, author = (m.group(1), m.group(2)) if m else (h, "")
+
+    if author and title.endswith(" - " + author):
+        title = title[: -len(" - " + author)].rstrip()
+    title = title.replace("_ ", ": ")
+    if title.endswith("_"):
+        title = title[:-1]
+
+    return (title.strip(), author.strip())
+
+
+def dedup_key(heading, kind, text):
     """Key on the text, deliberately not the location.
 
     The Kindle's own entries use Kindle *locations* (small numbers), while we
@@ -65,7 +88,7 @@ def dedup_key(title, kind, text):
 
     Whitespace is normalised so a reflowed copy still matches.
     """
-    return (title.strip(), kind, " ".join(text.split())[:200])
+    return (normalize_heading(heading), kind, " ".join(text.split())[:200])
 
 
 def format_added(iso):

@@ -113,6 +113,37 @@ def load_navigation(kfx_path):
     return pages, toc_items
 
 
+def clean_title(title, authors):
+    """Undo what "Send to Kindle" does to a personal document's title.
+
+    Personal documents (cde_content_type PDOC) get their title from the
+    uploaded filename, so it arrives with the author appended and with ":"
+    replaced by "_" — the Kindle can't put a colon in a filename. Left as-is,
+    Readwise files "The Creative Act_ A Way of Being - Rick Rubin" as a
+    separate book from the "The Creative Act: A Way of Being" it already has.
+
+    Amazon also truncates the filename (around 42 characters), and that part
+    is not recoverable — the full title isn't stored anywhere on the device.
+    """
+    t = (title or "").strip()
+
+    # Only strip the suffix when it really is the author, so a title that
+    # genuinely ends in " - something" survives.
+    for a in authors or []:
+        suffix = " - " + a
+        if t.endswith(suffix):
+            t = t[:-len(suffix)].rstrip()
+            break
+
+    # "_ " is the subtitle colon. A bare underscore inside a word is left
+    # alone, since that's more likely to be part of the real title.
+    t = t.replace("_ ", ": ")
+    if t.endswith("_"):
+        t = t[:-1]
+
+    return t.strip()
+
+
 def generate_html(title, authors, items, output_path, year=""):
     """Write highlights to an HTML file with simple Kindle Notebook styling."""
     style = """
@@ -191,7 +222,7 @@ def generate_html(title, authors, items, output_path, year=""):
         "<head>",
         "<meta charset='UTF-8' />",
         style,
-        "<title></title>",
+        f"<title>{escape(title)}</title>",
         "</head>",
         "<body>",
         "<div class='bodyContainer'>",
@@ -327,7 +358,7 @@ def main():
     year = ""
     if getattr(meta, "issue_date", None):
         year = str(meta.issue_date).split("-")[0]
-    title = meta.title or Path(kfx_file).stem
+    title = clean_title(meta.title or Path(kfx_file).stem, meta.authors or [])
     authors = meta.authors or []
     generate_html(title, authors, highlights, output_html, year)
     print(f"\nSaved HTML highlights to {output_html}")
