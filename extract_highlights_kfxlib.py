@@ -93,7 +93,7 @@ def load_navigation(kfx_path):
                 pages.append((pid, label))
             pages.sort(key=lambda x: x[0])
         elif typ == "$212":  # toc
-            def build_items(items):
+            def build_toc_items(items):
                 result = []
                 for itm in items:
                     eid = itm["$246"]["$155"]
@@ -103,12 +103,12 @@ def load_navigation(kfx_path):
                     node = {
                         "label": label,
                         "pid": pid,
-                        "children": build_items(itm.get("$247", [])),
+                        "children": build_toc_items(itm.get("$247", [])),
                     }
                     result.append(node)
                 return result
 
-            toc_items = build_items(data.get("$247", []))
+            toc_items = build_toc_items(data.get("$247", []))
 
     return pages, toc_items
 
@@ -278,6 +278,119 @@ def generate_html(title, authors, items, output_path, year=""):
         f.write("\n".join(html_parts))
 
 
+def pos_of(ann, field):
+    """The integer position out of a krds 'longPosition:shortPosition' string."""
+    return int(ann[field].split(":")[1])
+
+
+def attach_notes(annotations, notes):
+    """Match each note to the highlight it was written on.
+
+    A note's own span lies *inside* its highlight's span. Usually it is the
+    tail of it, so note.endPosition == highlight.endPosition, but a note
+    anchored partway through a long highlight only satisfies containment.
+    Containment covers both, so that's the rule.
+
+    Matching on the note's *start* against the highlight's *end* — which is
+    what this did before — describes neither case, and on a real library it
+    matched nothing at all: every note was dropped.
+
+    Returns {index into annotations: [indices into notes]}. Notes matching no
+    highlight are simply absent, and the caller emits those standalone.
+    """
+    spans = [(pos_of(a, "startPosition"), pos_of(a, "endPosition"))
+             for a in annotations]
+    by_highlight = {}
+    for ni, n in enumerate(notes):
+        start = pos_of(n, "startPosition")
+        candidates = [hi for hi, (a, b) in enumerate(spans) if a <= start <= b]
+        if not candidates:
+            continue
+        # Highlights don't normally overlap; where they do, the tightest span
+        # is the one the note was actually anchored in.
+        hi = min(candidates, key=lambda i: spans[i][1] - spans[i][0])
+        by_highlight.setdefault(hi, []).append(ni)
+    return by_highlight
+
+
+def build_items(annotations, notes, resolve_text, page_for_pid, find_section,
+                verbose=True):
+    """Assemble the ordered highlight/note list for one book.
+
+    resolve_text(start, end) returns the book text for a span; page_for_pid
+    and find_section place a position in the book's navigation.
+    """
+    items = []
+    annotations = sorted(annotations, key=lambda a: pos_of(a, "startPosition"))
+    notes_by_highlight = attach_notes(annotations, notes)
+    attached = set()
+    if verbose:
+        print(f"Found {len(annotations)} highlights and {len(notes)} notes:"
+              f"\n{'='*60}")
+    for i, ann in enumerate(annotations, 1):
+        start = pos_of(ann, "startPosition")
+        end = pos_of(ann, "endPosition")
+        text = resolve_text(start, end)
+        page = page_for_pid(start)
+        section, chapter = find_section(start)
+        if verbose:
+            print(f"\nHighlight #{i}")
+            print(f"Created: {ann['creationTime']}")
+            print(f"Text: {text}\n{'-'*60}")
+        items.append({
+            "creationTime": ann["creationTime"],
+            "text": text,
+            "page": page,
+            "section": section,
+            "chapter": chapter,
+            "type": "highlight",
+            "locStart": start,
+            "locEnd": end,
+        })
+        for ni in notes_by_highlight.get(i - 1, []):
+            attached.add(ni)
+            n = notes[ni]
+            items.append({
+                # Keep the note's own timestamp, not the highlight's — My
+                # Clippings entries record when each annotation was made.
+                "creationTime": n.get("creationTime", "") or ann["creationTime"],
+                "text": n.get("note", ""),
+                "page": page,
+                "section": section,
+                "chapter": chapter,
+                "type": "note",
+                # The highlight's span, so the pair sorts together below.
+                "locStart": start,
+                "locEnd": end,
+            })
+
+    # A note doesn't have to sit on a highlight — you can drop one anywhere in
+    # a book, and one whose highlight didn't come through is orphaned too.
+    # Either way it has a position of its own, so emit it standalone rather
+    # than dropping it, which is what happened before.
+    for ni, n in enumerate(notes):
+        if ni in attached or not (n.get("note") or "").strip():
+            continue
+        start = pos_of(n, "startPosition")
+        end = pos_of(n, "endPosition") if n.get("endPosition") else start
+        section, chapter = find_section(start)
+        items.append({
+            "creationTime": n.get("creationTime", ""),
+            "text": n["note"],
+            "page": page_for_pid(start),
+            "section": section,
+            "chapter": chapter,
+            "type": "note",
+            "locStart": start,
+            "locEnd": end,
+        })
+
+    # Stable, so an attached note keeps its place right after its highlight
+    # while standalone ones slot in at their own position in the book.
+    items.sort(key=lambda item: item["locStart"])
+    return items
+
+
 def main():
     if len(sys.argv) != 3:
         print("Usage: python extract_highlights_kfxlib.py <annotations.json> <book.kfx>")
@@ -326,46 +439,10 @@ def main():
         return (section["label"] if section else None,
                 chapter["label"] if chapter else None)
 
-    highlights = []
-    notes_by_end = {}
-    for n in notes:
-        pos = int(n["startPosition"].split(":")[1])
-        # Keep the note's own timestamp, not the highlight's — My Clippings
-        # entries record when each annotation was actually made.
-        notes_by_end.setdefault(pos, []).append((n["note"], n.get("creationTime", "")))
-
-    annotations.sort(key=lambda a: int(a["startPosition"].split(":")[1]))
-    print(f"Found {len(annotations)} highlights:\n{'='*60}")
-    for i, ann in enumerate(annotations, 1):
-        start = int(ann["startPosition"].split(":")[1])
-        end = int(ann["endPosition"].split(":")[1])
-        text = extract_text(sections, start, end)
-        page = page_for_pid(start)
-        section, chapter = find_section(start)
-        print(f"\nHighlight #{i}")
-        print(f"Created: {ann['creationTime']}")
-        print(f"Text: {text}\n{'-'*60}")
-        highlights.append({
-            "creationTime": ann["creationTime"],
-            "text": text,
-            "page": page,
-            "section": section,
-            "chapter": chapter,
-            "type": "highlight",
-            "locStart": start,
-            "locEnd": end,
-        })
-        for note_text, note_time in notes_by_end.get(end, []):
-            highlights.append({
-                "creationTime": note_time or ann["creationTime"],
-                "text": note_text,
-                "page": page,
-                "section": section,
-                "chapter": chapter,
-                "type": "note",
-                "locStart": start,
-                "locEnd": end,
-            })
+    highlights = build_items(
+        annotations, notes,
+        lambda start, end: extract_text(sections, start, end),
+        page_for_pid, find_section)
 
     output_html = Path(kfx_file).with_suffix(".highlights.html")
     year = ""

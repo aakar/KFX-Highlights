@@ -109,6 +109,12 @@ finding nothing, for every book read after the switch.
 change. The script reads the database first and falls back to `.yjr` sidecars
 for older books, skipping any book it already handled.
 
+The database keeps the same annotation in up to three tables — `server_view`
+is the synced copy, `local_edit` holds changes not yet pushed to Amazon, and
+`nonsyncable_annotations` holds device-only ones. Both listing books and
+converting one read all three, so a book you highlighted moments ago, before
+the device next synced, isn't invisible.
+
 **If highlights silently stop appearing again**, the giveaway is
 `documents/My Clippings.txt`. It's the oldest and simplest writer on the
 device, and it stopped on the same day the sidecars did. When it goes quiet at
@@ -281,12 +287,20 @@ python3 update_clippings.py "My Clippings.txt" *.highlights.json --dry-run
 ```
 
 Two things worth knowing about the entries it writes. Duplicates are detected
-by **highlight text**, not by location — the Kindle records Kindle locations
-while we only have raw KFX character positions, so the same highlight has two
-different numbers depending on who wrote it. Keying on location would re-add
-your whole back catalogue on the first run. For the same reason the generated
-entries carry a page number but no `| Location N` field, rather than printing
-a wrong-looking number in a familiar slot.
+by **full highlight text plus page**, not by location — the Kindle records
+Kindle locations while we only have raw KFX character positions, so the same
+highlight has two different numbers depending on who wrote it. Keying on
+location would re-add your whole back catalogue on the first run. The page is
+the one number both writers agree on, so it's used to tell apart two entries
+whose text is identical — a refrain, an epigraph quoted again later, or the
+same terse note (`.c1`) typed on three different pages. When either side has
+no page, matching text alone still counts as a duplicate, which is the
+conservative call for books with no page list. Two entries with identical
+text on the *same* page still collapse into one; the timestamp would separate
+them, but the Kindle's clock and ours disagree by up to several minutes on the
+same annotation, so keying on it would re-add real entries. For the same reason the
+generated entries carry a page number but no `| Location N` field, rather than
+printing a wrong-looking number in a familiar slot.
 
 This keeps a *local* copy current. It doesn't write back to the Kindle.
 
@@ -306,7 +320,12 @@ python3 ksdk_to_krds.py ksdk_annotation_v1.db <ASIN> -o book.json
 python3 extract_highlights_kfxlib.py book.json book.kfx
 ```
 
-That writes `<book>.highlights.html` and prints every highlight.
+That writes `<book>.highlights.html` and prints every highlight. Notes come
+through too. A note's span lies *inside* the span of the highlight it was
+written on — usually its tail, sometimes partway through a long one — so
+notes are paired by containment and emitted right after their highlight. A
+note matching no highlight is emitted on its own at its own position rather
+than dropped.
 
 For a legacy `.yjr` sidecar, the original path still works:
 

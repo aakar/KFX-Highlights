@@ -29,14 +29,14 @@ BOM = "﻿"
 
 
 def parse_existing(path):
-    """Return a set of dedup keys for entries already in the file.
+    """Return the seen-index for entries already in the file.
 
     Tolerant on purpose: anything it can't parse is skipped rather than
     treated as an error, since we only ever append.
     """
-    keys = set()
+    seen = {}
     if not os.path.exists(path):
-        return keys
+        return seen
 
     with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
         raw = f.read()
@@ -50,9 +50,9 @@ def parse_existing(path):
         meta = lines[1]
         text = " ".join(lines[2:]).strip()
         kind = "note" if "Your Note" in meta else "highlight"
-        keys.add(dedup_key(title, kind, text))
+        remember(seen, dedup_key(title, kind, text), parse_page(meta))
 
-    return keys
+    return seen
 
 
 def normalize_heading(heading):
@@ -78,17 +78,73 @@ def normalize_heading(heading):
     return (title.strip(), author.strip())
 
 
+def page_of(h):
+    """The page an extracted annotation sits on, or None if the book has none.
+
+    The counterpart to parse_page(): both sides of a dedup comparison have to
+    agree on what "no page" looks like.
+    """
+    page = h.get("page")
+    page = str(page).strip() if page is not None else ""
+    return page or None
+
+
+def parse_page(meta):
+    """The page an entry's '- Your Highlight on page 15 | ...' line names.
+
+    Returns None when there isn't one: the Kindle omits the page for books
+    with no page list, and we write the literal placeholder "x" in that case.
+    A real roman-numeral page x therefore reads as unknown, which only ever
+    makes dedup more conservative.
+    """
+    m = re.search(r"\bon page ([^\s|]+)", meta or "")
+    if not m:
+        return None
+    page = m.group(1).strip()
+    return None if page in ("", "x") else page
+
+
 def dedup_key(heading, kind, text):
-    """Key on the text, deliberately not the location.
+    """Key on the full text, deliberately not the location.
 
     The Kindle's own entries use Kindle *locations* (small numbers), while we
     only have raw KFX character positions — different units for the same
     highlight. Including either in the key would make every entry the Kindle
-    already wrote look new, and re-add the whole back catalogue.
+    already wrote look new, and re-add the whole back catalogue. The page is
+    kept out of the key too and used as a tiebreaker instead, see
+    is_duplicate().
 
-    Whitespace is normalised so a reflowed copy still matches.
+    Whitespace is normalised so a reflowed copy still matches. The text is
+    compared in full: a prefix is not an identity, and truncating it merged
+    distinct passages that happened to open the same way.
     """
-    return (normalize_heading(heading), kind, " ".join(text.split())[:200])
+    return (normalize_heading(heading), kind, " ".join(text.split()))
+
+
+def remember(seen, key, page):
+    """Record that an entry with this key exists on this page."""
+    seen.setdefault(key, set()).add(page)
+
+
+def is_duplicate(seen, key, page):
+    """Whether an entry with this key and page has already been written.
+
+    Same text can legitimately appear twice in a book — an epigraph repeated
+    in a chapter, a refrain, a phrase highlighted in two places — so matching
+    text alone is not enough to call it the same annotation. The page
+    separates them when both sides have one.
+
+    When either side's page is unknown, fall back to treating matching text
+    as a duplicate. That's the conservative read: the Kindle omits the page
+    on books without a page list, and guessing "new" there would re-append
+    the whole back catalogue on every run.
+    """
+    pages = seen.get(key)
+    if pages is None:
+        return False
+    if page is None or None in pages:
+        return True
+    return page in pages
 
 
 def format_added(iso):
@@ -126,7 +182,7 @@ def build_entry(title, authors, h):
     heading = heading_for(title, authors)
 
     kind = "Your Note" if h.get("type") == "note" else "Your Highlight"
-    page = h.get("page")
+    page = page_of(h)
     page_part = f"on page {page} " if page else "on page x "
 
     # No "| Location N" field: the Kindle records Kindle locations and all we
@@ -148,11 +204,11 @@ def main():
                     help="report what would be added without writing")
     args = ap.parse_args()
 
-    existing = parse_existing(args.clippings)
-    print(f"{len(existing)} entries already in {os.path.basename(args.clippings)}")
+    seen = parse_existing(args.clippings)
+    n_existing = sum(len(pages) for pages in seen.values())
+    print(f"{n_existing} entries already in {os.path.basename(args.clippings)}")
 
     new_entries = []
-    seen = set(existing)
 
     for jf in args.json_files:
         try:
@@ -172,9 +228,10 @@ def main():
             if not text.strip():
                 continue
             key = dedup_key(heading, h.get("type", "highlight"), text)
-            if key in seen:
+            page = page_of(h)
+            if is_duplicate(seen, key, page):
                 continue
-            seen.add(key)
+            remember(seen, key, page)
             new_entries.append(build_entry(title, authors, h))
             added_here += 1
 
