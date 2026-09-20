@@ -30,3 +30,7 @@ highlights/
 
 # Fetched from upstream by fetch-krds.sh
 krds.py
+
+# Locally maintained clippings file
+"My Clippings.txt"
+.sidecars/

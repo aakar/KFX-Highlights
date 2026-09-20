@@ -286,7 +286,9 @@ def main():
     notes_by_end = {}
     for n in notes:
         pos = int(n["startPosition"].split(":")[1])
-        notes_by_end.setdefault(pos, []).append(n["note"])
+        # Keep the note's own timestamp, not the highlight's — My Clippings
+        # entries record when each annotation was actually made.
+        notes_by_end.setdefault(pos, []).append((n["note"], n.get("creationTime", "")))
 
     annotations.sort(key=lambda a: int(a["startPosition"].split(":")[1]))
     print(f"Found {len(annotations)} highlights:\n{'='*60}")
@@ -306,23 +308,36 @@ def main():
             "section": section,
             "chapter": chapter,
             "type": "highlight",
+            "locStart": start,
+            "locEnd": end,
         })
-        for note_text in notes_by_end.get(end, []):
+        for note_text, note_time in notes_by_end.get(end, []):
             highlights.append({
-                "creationTime": "",
+                "creationTime": note_time or ann["creationTime"],
                 "text": note_text,
                 "page": page,
                 "section": section,
                 "chapter": chapter,
                 "type": "note",
+                "locStart": start,
+                "locEnd": end,
             })
 
     output_html = Path(kfx_file).with_suffix(".highlights.html")
     year = ""
     if getattr(meta, "issue_date", None):
         year = str(meta.issue_date).split("-")[0]
-    generate_html(meta.title or Path(kfx_file).stem, meta.authors or [], highlights, output_html, year)
+    title = meta.title or Path(kfx_file).stem
+    authors = meta.authors or []
+    generate_html(title, authors, highlights, output_html, year)
     print(f"\nSaved HTML highlights to {output_html}")
+
+    # Structured sidecar, so update_clippings.py can rebuild My Clippings.txt
+    # entries without re-parsing the HTML.
+    output_json = Path(kfx_file).with_suffix(".highlights.json")
+    with open(output_json, "w", encoding="utf-8") as f:
+        json.dump({"title": title, "authors": authors, "highlights": highlights},
+                  f, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":

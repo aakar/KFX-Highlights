@@ -64,6 +64,12 @@ DRM_SKIP="${KFX_DRM_SKIP:-}"
 # Usually discovered automatically; set KFX_KINDLE_DIR to override.
 KINDLE_DIR="${KFX_KINDLE_DIR:-}"
 
+# A My Clippings.txt kept up to date with everything we extract. The Kindle
+# stopped appending to its own copy when annotations moved to the database,
+# so this rebuilds the missing entries in the same format. Set to "" to skip.
+# Seeded from the device's copy on first run.
+CLIPPINGS="${KFX_CLIPPINGS-$OUTPUT_DIR/My Clippings.txt}"
+
 LAST_RUN_FILE="$WORK_DIR/.last_run"
 CONVERTER="$WORK_DIR/ksdk_to_krds.py"
 KRDS="$WORK_DIR/krds.py"
@@ -72,6 +78,11 @@ LOCAL_DB="$WORK_DIR/.ksdk_annotations.db"
 
 cd "$WORK_DIR" || exit 1
 mkdir -p "$MOUNT_POINT" "$OUTPUT_DIR"
+
+# Sidecars accumulate here during the run, then feed the clippings update.
+SIDECAR_DIR="$WORK_DIR/.sidecars"
+rm -rf "$SIDECAR_DIR"
+mkdir -p "$SIDECAR_DIR"
 
 for cmd in go-mtpfs python3; do
   command -v "$cmd" >/dev/null || { echo "❌ $cmd not found on PATH"; exit 1; }
@@ -89,6 +100,7 @@ MTP_PID=$!
 
 cleanup() {
   rm -f changed_yjrs.txt "$LOCAL_DB" "$WORK_DIR/.extract_err"
+  rm -rf "$SIDECAR_DIR"
   rm -f *.json
   umount "$MOUNT_POINT" 2>/dev/null
 }
@@ -236,6 +248,13 @@ process_book() {
   fi
   rm -f "$errlog"
 
+  # Collect the structured sidecar; My Clippings.txt is updated in one pass
+  # at the end so the file is opened once rather than once per book.
+  if [ -n "$CLIPPINGS" ] && [ -f "${base}.highlights.json" ]; then
+    mv -f "${base}.highlights.json" "$SIDECAR_DIR/"
+  fi
+  rm -f "${base}.highlights.json"
+
   html="${base}.highlights.html"
   if [ -f "$html" ]; then
     mv -f "$html" "$OUTPUT_DIR/$html"
@@ -339,6 +358,30 @@ while IFS= read -r YJR_FILE; do
   process_book "$ASIN" "$JSON"
   rm -f "$YJR_LOCAL" "$JSON"
 done < changed_yjrs.txt
+
+# ---------------------------------------------------------------------------
+# Keep My Clippings.txt current. The Kindle no longer appends to its own copy,
+# so rebuild the missing entries from what we just extracted.
+# ---------------------------------------------------------------------------
+CLIPPINGS_ADDED=""
+if [ -n "$CLIPPINGS" ] && [ -n "$(ls -A "$SIDECAR_DIR" 2>/dev/null)" ]; then
+  # Seed from the device's copy the first time, so existing entries are kept
+  # and used for dedup rather than being duplicated.
+  if [ ! -f "$CLIPPINGS" ]; then
+    DEVICE_CLIPPINGS="$STORAGE_ROOT/documents/My Clippings.txt"
+    if [ -f "$DEVICE_CLIPPINGS" ]; then
+      echo
+      echo "Seeding $(basename "$CLIPPINGS") from the device's copy"
+      cp "$DEVICE_CLIPPINGS" "$CLIPPINGS" 2>/dev/null
+    fi
+  fi
+
+  echo
+  echo "Updating $(basename "$CLIPPINGS")"
+  CLIPPINGS_ADDED=$(python3 "$WORK_DIR/update_clippings.py" "$CLIPPINGS" \
+                      "$SIDECAR_DIR"/*.highlights.json 2>&1 | sed 's/^/  /')
+  printf "%s\n" "$CLIPPINGS_ADDED"
+fi
 
 echo
 echo "===== Summary ====="

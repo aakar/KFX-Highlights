@@ -31,3 +31,7 @@
 # containing the .sdr sidecar folders, e.g.
 #   $KFX_MOUNT_POINT/Internal Storage/documents/Downloads/Items01
 # : "${KFX_KINDLE_DIR=}"
+
+# A local My Clippings.txt, kept up to date by update_clippings.py
+# Set to "" to disable, or point elsewhere.
+: "${KFX_CLIPPINGS=$KFX_OUTPUT_DIR/My Clippings.txt}"

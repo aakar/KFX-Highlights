@@ -64,6 +64,9 @@ account and will ask for automation permission the first time. See
 > Re-runs only pick up highlights newer than the last successful run. To
 > re-export everything, delete `.last_run`.
 
+Each run also keeps a `My Clippings.txt` up to date in the output folder —
+see [Keeping My Clippings.txt current](#keeping-my-clippingstxt-current).
+
 ## How it works
 
 The Kindle stores a highlight as a *position range*, not as text. Getting
@@ -210,6 +213,7 @@ file is fine. See `config.example.sh` for all of them:
 | `KFX_EMAIL` | `add@readwise.io` | destination; `""` disables email |
 | `KFX_OUTPUT_DIR` | `./highlights` | where generated HTML is kept |
 | `KFX_DRM_SKIP` | *(empty)* | ASINs to skip, space-separated |
+| `KFX_CLIPPINGS` | `./highlights/My Clippings.txt` | local clippings file; `""` disables |
 | `KFX_KINDLE_DIR` | *(auto)* | book folder, if detection fails |
 
 They're environment variables too, so you can override one for a single run:
@@ -248,6 +252,42 @@ No highlights: 0
 `.last_run` records when the last successful run finished; only books with
 highlights newer than that are processed. Delete it to re-export everything,
 or set it back to a specific Unix timestamp to re-send a narrower window.
+
+### Keeping My Clippings.txt current
+
+The Kindle stopped appending to `My Clippings.txt` at the same time it stopped
+writing the sidecars, so that file is frozen at whatever it held before the
+change. Every run rebuilds the missing entries from what it extracts, in the
+Kindle's own format:
+
+```
+Updating My Clippings.txt
+  402 entries already in My Clippings.txt
+    +   9  Bowling Alone_ Revised and Updated_ The Co - Robert D. Putnam
+    +  72  The Creative Act_ A Way of Being - Rick Rubin
+  Appended 81 entries
+```
+
+The file lives in the output folder, seeded from the device's copy the first
+time so nothing already recorded is lost or duplicated. It's only ever
+appended to — existing entries are never rewritten or reordered. Set
+`KFX_CLIPPINGS=""` to turn this off, or point it somewhere else.
+
+Running it by hand against any set of extracted books:
+
+```
+python3 update_clippings.py "My Clippings.txt" *.highlights.json --dry-run
+```
+
+Two things worth knowing about the entries it writes. Duplicates are detected
+by **highlight text**, not by location — the Kindle records Kindle locations
+while we only have raw KFX character positions, so the same highlight has two
+different numbers depending on who wrote it. Keying on location would re-add
+your whole back catalogue on the first run. For the same reason the generated
+entries carry a page number but no `| Location N` field, rather than printing
+a wrong-looking number in a familiar slot.
+
+This keeps a *local* copy current. It doesn't write back to the Kindle.
 
 ### Doing it by hand
 
