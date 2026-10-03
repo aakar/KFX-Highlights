@@ -7,6 +7,10 @@ Most of the documents I read on my Kindle are sent via "Send to Kindle" so that
 I can read them on other devices. There's no built-in way to export those
 synced highlights, so this does it directly from the device's own storage.
 
+> **Note:** Books sent via "Send to Kindle" are the well-tested path. Sideloaded
+> **PDFs** are supported but lightly tested, and sideloaded **AZW3/MOBI** books
+> aren't supported yet — see [Limitations](#limitations).
+
 macOS only. Works with Kindle firmware on both sides of the 5.19 annotation
 change (see [Where annotations live](#where-annotations-live)).
 
@@ -73,7 +77,8 @@ The Kindle stores a highlight as a *position range*, not as text. Getting
 readable output means combining two things:
 
 1. **The annotations** — where each highlight starts and ends.
-2. **The book** — the `.kfx` file, so those positions can be resolved to words.
+2. **The book** — the `.kfx` file (or, for a sideloaded document, the PDF), so
+   those positions can be resolved to words.
 
 `extract-kindle-highlights.sh` mounts the Kindle, finds books whose highlights
 changed since the last run, copies the annotations and the book off the device,
@@ -221,7 +226,7 @@ file is fine. See `config.example.sh` for all of them:
 | `KFX_DRM_SKIP` | *(empty)* | DRM-locked ASINs to skip, space-separated |
 | `KFX_SKIP` | *(empty)* | any other ASINs to leave alone |
 | `KFX_CLIPPINGS` | `./highlights/My Clippings.txt` | local clippings file; `""` disables |
-| `KFX_KINDLE_DIR` | *(auto)* | book folder, if detection fails |
+| `KFX_KINDLE_DIR` | *(auto)* | one book folder, if detection fails; auto-detection otherwise scans every folder under `documents/` with `.sdr` sidecars |
 
 They're environment variables too, so you can override one for a single run:
 
@@ -334,6 +339,21 @@ python3 extract_highlights.py <book.kfx> <annotations.yjr>
 ```
 
 ## Limitations
+
+**Sideloaded documents.** Everything here was built against books delivered
+via "Send to Kindle". For documents copied onto the Kindle over USB:
+
+- **PDF** works. The Kindle stores a PDF highlight as page + character offset,
+  and the text is read back out of the PDF with `pypdf`. The Kindle's offsets
+  run a fixed 4 characters ahead of `pypdf`'s text, which was measured on one
+  PDF, so a differently produced PDF may come out slightly shifted. Scanned
+  PDFs with no text layer can't be resolved.
+- **AZW3/MOBI** is not supported. The Kindle identifies these by an ID inside
+  the book rather than anything in the filename, and its positions need more
+  work to map to text; they're skipped with a "No book file on device" warning.
+  Add the ID to `KFX_SKIP` to silence it.
+
+See [SIDELOADED-BOOKS.md](SIDELOADED-BOOKS.md) for the details and what's left.
 
 **Locations aren't real Kindle locations.** Each highlight is exported in the
 Kindle's own format, `Page 26 · Location 36467`. The page is accurate — it

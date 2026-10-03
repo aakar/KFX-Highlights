@@ -65,8 +65,9 @@ DRM_SKIP="${KFX_DRM_SKIP:-}"
 # don't want re-sent, say. Same space-separated format.
 DRM_SKIP="$DRM_SKIP ${KFX_SKIP:-}"
 
-# Usually discovered automatically; set KFX_KINDLE_DIR to override.
-KINDLE_DIR="${KFX_KINDLE_DIR:-}"
+# Usually discovered automatically (every folder with .sdr sidecars under
+# documents/); set KFX_KINDLE_DIR to a single folder to override.
+KINDLE_DIRS="${KFX_KINDLE_DIR:-}"
 
 # A My Clippings.txt kept up to date with everything we extract. The Kindle
 # stopped appending to its own copy when annotations moved to the database,
@@ -78,6 +79,7 @@ LAST_RUN_FILE="$WORK_DIR/.last_run"
 CONVERTER="$WORK_DIR/ksdk_to_krds.py"
 KRDS="$WORK_DIR/krds.py"
 EXTRACTOR="$WORK_DIR/extract_highlights_kfxlib.py"
+PDF_EXTRACTOR="$WORK_DIR/extract_highlights_pdf.py"
 LOCAL_DB="$WORK_DIR/.ksdk_annotations.db"
 
 cd "$WORK_DIR" || exit 1
@@ -123,15 +125,24 @@ find_storage_root() {
 }
 
 # Books live in documents/ on some devices and documents/Downloads/ItemsNN on
-# others. Whichever it is, it's the folder holding the .sdr sidecar folders.
-# Pick the folder with the most of them: documents/ itself usually has a lone
-# "My Clippings.sdr", which would otherwise win just by being shallower.
-find_kindle_dir() {
-  KINDLE_DIR=$(find "$STORAGE_ROOT/documents" -maxdepth 4 -type d -name "*.sdr" 2>/dev/null \
-    | sed 's|/[^/]*\.sdr$||' \
-    | sort | uniq -c | sort -rn | head -1 \
-    | sed 's|^ *[0-9]* ||')
-  [ -n "$KINDLE_DIR" ]
+# others, and a device can have several of these at once. Each folder holding
+# .sdr sidecar folders is a book folder; collect all of them, one per line, in
+# KINDLE_DIRS. "My Clippings.sdr" is ignored: it isn't a book.
+find_kindle_dirs() {
+  KINDLE_DIRS=$(find "$STORAGE_ROOT/documents" -maxdepth 4 -type d -name "*.sdr" \
+                  ! -name "My Clippings.sdr" 2>/dev/null \
+    | sed 's|/[^/]*\.sdr$||' | sort -u)
+  [ -n "$KINDLE_DIRS" ]
+}
+
+# find, run over every book folder. The sidecars sit exactly one level down
+# (<dir>/<book>.sdr/<file>), so callers pass -maxdepth 2; that also keeps
+# nested book folders from being searched twice.
+find_in_kindle_dirs() {
+  local d
+  while IFS= read -r d; do
+    [ -d "$d" ] && find "$d" "$@" 2>/dev/null
+  done <<< "$KINDLE_DIRS"
 }
 
 # Wait for the mount to come up. The mount point appearing is not enough — MTP
@@ -143,9 +154,9 @@ TOTAL_YJR=0
 for _ in $(seq 1 20); do
   [ -n "$STORAGE_ROOT" ] || find_storage_root
   if [ -n "$STORAGE_ROOT" ]; then
-    [ -n "$KINDLE_DIR" ] || find_kindle_dir
-    if [ -n "$KINDLE_DIR" ] && [ -d "$KINDLE_DIR" ]; then
-      TOTAL_YJR=$(find "$KINDLE_DIR" -name "*.yjr" 2>/dev/null | wc -l | tr -d ' ')
+    [ -n "$KINDLE_DIRS" ] || find_kindle_dirs
+    if [ -n "$KINDLE_DIRS" ]; then
+      TOTAL_YJR=$(find_in_kindle_dirs -maxdepth 2 -name "*.yjr" | wc -l | tr -d ' ')
       [ "$TOTAL_YJR" -gt 0 ] && break
     fi
   fi
@@ -159,7 +170,7 @@ if [ -z "$STORAGE_ROOT" ]; then
   exit 1
 fi
 
-if [ -z "$KINDLE_DIR" ] || [ ! -d "$KINDLE_DIR" ]; then
+if [ -z "$KINDLE_DIRS" ]; then
   echo "❌ Mounted at $STORAGE_ROOT, but found no book folder (nothing with"
   echo "   .sdr sidecars under documents/). Set KFX_KINDLE_DIR to override."
   exit 1
@@ -186,16 +197,30 @@ BOOK_EXT=""
 find_book() {
   BOOK_FILE=""
   BOOK_EXT=""
-  local asin="$1" ext f
-  for ext in kfx azw3 azw mobi; do
-    for f in "$KINDLE_DIR"/*_"$asin"."$ext"; do
+  local asin="$1" ext f dir sdr
+  while IFS= read -r dir; do
+    for ext in kfx azw3 azw mobi; do
+      for f in "$dir"/*_"$asin"."$ext"; do
+        if [ -f "$f" ]; then
+          BOOK_FILE="$f"
+          BOOK_EXT="$ext"
+          return 0
+        fi
+      done
+    done
+    # A sideloaded PDF has no ASIN in its name. Its "ASIN" is the start of a
+    # UUID, and the only link to the file is a folder named for that UUID
+    # inside the book's .sdr, which is itself named after the PDF.
+    for sdr in "$dir"/*.sdr; do
+      compgen -G "$sdr/$asin-*" >/dev/null || continue
+      f="${sdr%.sdr}.pdf"
       if [ -f "$f" ]; then
         BOOK_FILE="$f"
-        BOOK_EXT="$ext"
+        BOOK_EXT="pdf"
         return 0
       fi
     done
-  done
+  done <<< "$KINDLE_DIRS"
   return 1
 }
 
@@ -235,8 +260,9 @@ process_book() {
 
   # Capture stderr so a DRM failure reads as one clear line instead of a
   # Python traceback — it's expected for purchased books, not a crash.
-  local errlog="$WORK_DIR/.extract_err"
-  if ! python3 "$EXTRACTOR" "$json" "$base.$BOOK_EXT" 2>"$errlog"; then
+  local errlog="$WORK_DIR/.extract_err" extractor="$EXTRACTOR"
+  [ "$BOOK_EXT" = "pdf" ] && extractor="$PDF_EXTRACTOR"
+  if ! python3 "$extractor" "$json" "$base.$BOOK_EXT" 2>"$errlog"; then
     if grep -q "KFXDRMError" "$errlog" 2>/dev/null; then
       echo "❌ $base is DRM-protected."
       echo "   Its highlight positions exist, but the book text can't be"
@@ -326,7 +352,7 @@ fi
 # ---------------------------------------------------------------------------
 REF="$WORK_DIR/.last_run_ref"
 touch -am -t "$(date -u -r "$LAST_RUN_EPOCH" +%Y%m%d%H%M.%S)" "$REF"
-find "$KINDLE_DIR" -name "*.yjr" -newer "$REF" > changed_yjrs.txt
+find_in_kindle_dirs -maxdepth 2 -name "*.yjr" -newer "$REF" > changed_yjrs.txt
 rm -f "$REF"
 
 while IFS= read -r YJR_FILE; do
